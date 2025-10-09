@@ -7,11 +7,14 @@ const TELEGRAM_BOT_TOKEN = "7348650612:AAGxw63Hs1bzLBr994f07dkMeRNwI_-_f9w";
 
 // --- KONFIGURASI API KEY (Daftar API Key untuk Failover) ---
 const API_KEY_LIST = [
-    "WQTbogAvgRARIqYnVKajlvP2tQvu5Ku3", 
-    "jxA5WWudkNyCsavNUJiTRktDoiJ4i358"
+    { key: "jxA5WWudkNyCsavNUJiTRktDoiJ4i358", limit_reached_at: null, index: 0 },
+    { key: "YTJwp36jS0THRiJ74YWs8Vxj7TxYIQAU", limit_reached_at: null, index: 1 },
+    { key: "y5OmMGlJY9SCRuLo99WzHSZGtNMvPHwd", limit_reached_at: null, index: 2 },
+    { key: "LAF19i8MvV1n8P5wdDmEmwIRBIby4zGT", limit_reached_at: null, index: 3 }
 ];
 
 let currentKeyIndex = 0;
+const REFRESH_DELAY_MS = 20 * 60 * 1000; // 20 menit
 // --- AKHIR KONFIGURASI API KEY ---
 
 // --- Konstanta Logging ---
@@ -90,15 +93,45 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Fungsi untuk mendapatkan/mengganti API Key
 function getCurrentApiKey() {
-    return API_KEY_LIST[currentKeyIndex];
+    const index = getCurrentApiKeyIndex();
+    if (index === -1) return null; 
+    return API_KEY_LIST[index].key;
+}
+
+function getCurrentApiKeyIndex() {
+    for (let i = 0; i < API_KEY_LIST.length; i++) {
+        const keyData = API_KEY_LIST[i];
+        if (!keyData.limit_reached_at) {
+            return i;
+        }
+        if (i === 0 && Date.now() - keyData.limit_reached_at > REFRESH_DELAY_MS) {
+            keyData.limit_reached_at = null;
+            writeLog(`[FAILOVER RESET] Limit Key Utama ${keyData.key.substring(0, 5)}.... direset setelah 20 menit.`);
+            return 0;
+        }
+    }
+    return -1; 
 }
 
 function switchApiKey() {
     const oldKey = getCurrentApiKey();
-    currentKeyIndex = (currentKeyIndex + 1) % API_KEY_LIST.length;
-    const newKey = getCurrentApiKey();
-    writeLog(`[FAILOVER] Saldo Habis pada Key ${oldKey.substring(0, 5)}.... Beralih ke Key ${newKey.substring(0, 5)}....`);
-    return newKey;
+    const oldKeyData = API_KEY_LIST.find(k => k.key === oldKey);
+    oldKeyData.limit_reached_at = Date.now();
+    
+    for (let i = 1; i <= API_KEY_LIST.length; i++) {
+        const nextIndex = (oldKeyData.index + i) % API_KEY_LIST.length;
+        const newKeyData = API_KEY_LIST[nextIndex];
+        
+        if (!newKeyData.limit_reached_at) {
+            currentKeyIndex = newKeyData.index; 
+            writeLog(`[FAILOVER] Key ${oldKey.substring(0, 5)}.... mencapai limit. Beralih ke Key ${newKeyData.key.substring(0, 5)}....`);
+            return newKeyData.key;
+        }
+    }
+    
+    currentKeyIndex = 0;
+    writeLog(`[FAILOVER MAX] Semua key mencapai limit. Kembali ke Key Utama untuk menunggu 20 menit.`);
+    return null; 
 }
 
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
@@ -152,7 +185,7 @@ async function tryGenerateOrderWithFailover(url_generate) {
                 if (attempts < maxFailoverAttempts - 1) {
                     switchApiKey();
                     attempts++;
-                    continue; 
+                    continue; // Coba lagi di iterasi berikutnya
                 } else {
                     return { success: false, result, message: "Semua API Key kehabisan saldo." };
                 }
@@ -167,7 +200,7 @@ async function tryGenerateOrderWithFailover(url_generate) {
 
             if (error.response?.status === 400 && errorMsg.toLowerCase().includes('insufficient balance')) {
                 shouldFailover = true;
-            } else if (error.response?.status === 401 || error.response?.status === 403 || errorMsg.toLowerCase().includes('invalid token')) { 
+            } else if (error.response?.status === 401 || error.response?.status === 403 || errorMsg.toLowerCase().includes('invalid token')) { // Tambah 403 (Forbidden)
                 shouldFailover = true;
             }
 
@@ -189,7 +222,7 @@ async function tryGenerateOrderWithFailover(url_generate) {
 
 
 // --- Fungsi untuk menghasilkan Inline Keyboard Aksi ---
-function getOrderActionKeyboard(order_id, service_id_for_next_order, clean_number) {
+function getOrderActionKeyboard(order_id, service_id_for_next_order) {
     return {
         inline_keyboard: [
             [
@@ -216,15 +249,21 @@ async function formatOtpMessage(order_id) {
     }
     
     let otp_code = "Menunggu OTP...";
+    let otp_code_raw = null;
     
     let raw_number = order_data.number || order_data.formatted_number;
     
     const isKenangan = (order_data.service.id === TARGET_SERVICE_KENANGAN);
     if (isKenangan) {
-        raw_number = raw_number.replace(/^\+?62/, '8');
+        raw_number = raw_number.replace(/^\+?62/, '');
+        if (!raw_number.startsWith('8')) {
+            raw_number = '8' + raw_number; 
+        }
+    } else {
+        raw_number = raw_number.replace(/^\+/, '');
     }
     
-    const clean_number = raw_number.startsWith('+') ? raw_number.substring(1) : raw_number; 
+    const clean_number = raw_number; 
 
     // Logika Ekstraksi OTP Berdasarkan Prioritas
     if (order_data.sms_count > 0) {
@@ -241,22 +280,34 @@ async function formatOtpMessage(order_id) {
         }
 
         if (extracted_otp) {
-            otp_code = `*${extracted_otp}* (OTP Diterima)`;
+            // FIX FINAL: HANYA TAMPILKAN KODE MENTAH TANPA TANDA BINTANG
+            otp_code = extracted_otp;
+            otp_code_raw = extracted_otp;
         }
     }
 
     const service_name = isKenangan ? "KOPI KENANGAN" : "FORE COFFEE";
 
+    // FORMAT PESAN UTAMA (Nomor dan OTP menyatu dalam satu code block)
+    // FIX FINAL: Kedua nilai dibungkus code block agar bisa di-copy
     const finalMessage = 
-        `${service_name}: \`${clean_number}\` | ${otp_code}`;
+        `${service_name}: \`${clean_number}\` | \`${otp_code}\``;
+
+    // Tombol aksi standar
+    const action_keyboard = getOrderActionKeyboard(order_id, order_data.service.id).inline_keyboard;
 
     return {
         text: finalMessage,
         options: { 
             parse_mode: 'Markdown',
-            reply_markup: getOrderActionKeyboard(order_id, order_data.service.id, clean_number) 
+            // MEMASANG TOMBOL AKSI STANDAR
+            reply_markup: {
+                inline_keyboard: [
+                    ...action_keyboard
+                ]
+            }
         },
-        logData: { clean_number, otp_code, service: service_name }
+        logData: { clean_number, otp_code: otp_code_raw || otp_code, service: service_name }
     };
 }
 
@@ -267,7 +318,6 @@ bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     writeLog(`User ${chatId} memulai chat.`);
     
-    // REPLY KEYBOARD TANPA CEK SALDO
     const options = {
         reply_markup: {
             keyboard: [
@@ -299,25 +349,45 @@ bot.onText(/(\/riwayat|\s*📜\s*Riwayat Order)/i, async (msg) => {
 
     const allHistory = userHistory.reverse(); 
 
-    const groupedHistory = allHistory.reduce((acc, item) => {
+    // Filter hanya yang sudah selesai/dibatalkan (asumsi OTP masuk hanya untuk FINISHED)
+    const finalHistory = allHistory.filter(item => item.status === 'FINISHED' || item.status === 'CANCELED');
+
+    if (finalHistory.length === 0) {
+        return logAndSend(chatId, "Riwayat order yang sudah selesai/dibatalkan tidak ditemukan.");
+    }
+
+    const groupedHistory = finalHistory.reduce((acc, item) => {
         if (!acc[item.service]) {
             acc[item.service] = [];
         }
-        acc[item.service].push(item.number);
+        // Hanya tambahkan nomor yang statusnya FINISHED (OTP masuk)
+        if (item.status === 'FINISHED') {
+             acc[item.service].push(item.number);
+        }
+       
         return acc;
     }, {});
 
-    let message = "*📜 Seluruh Riwayat Order Anda:*\n\n";
+    let message = "*📜 Riwayat Order yang Selesai (OTP Masuk):*\n\n";
+
+    let foundAnyFinished = false;
 
     for (const service in groupedHistory) {
         message += `*${service}:*\n`;
         const uniqueNumbers = [...new Set(groupedHistory[service])]; 
-        uniqueNumbers.forEach(number => {
-            message += `\`${number}\`\n`;
-        });
-        message += "\n";
+        if (uniqueNumbers.length > 0) {
+            uniqueNumbers.forEach(number => {
+                message += `\`${number}\`\n`;
+            });
+            message += "\n";
+            foundAnyFinished = true;
+        }
     }
     
+    if (!foundAnyFinished) {
+        message = "Riwayat order yang sudah selesai (OTP masuk) tidak ditemukan.";
+    }
+
     logAndSend(chatId, message, { parse_mode: 'Markdown' });
 });
 
@@ -369,11 +439,10 @@ bot.on('callback_query', async (callbackQuery) => {
     const chatId = message.chat.id;
     const data = callbackQuery.data;
 
-    // --- Tangani tombol salin di sini ---
-    if (data.startsWith('copy_')) {
-        const number = data.split('_')[1];
-        bot.answerCallbackQuery(callbackQuery.id, { text: `Nomor disalin: ${number}`, show_alert: true });
-        writeLog(`[ACTION] User ${chatId} menyalin nomor ${number}.`);
+    // --- Tombol Salin (Dinonaktifkan) ---
+    if (data.startsWith('copy_num_') || data.startsWith('copy_otp_') || data.startsWith('service_info')) {
+        // Cukup jawab callback query tanpa melakukan apa-apa
+        try { bot.answerCallbackQuery(callbackQuery.id); } catch (e) {}
         return; 
     }
 
@@ -387,9 +456,12 @@ bot.on('callback_query', async (callbackQuery) => {
     // --- ALUR ORDER BARU (FORE COFFEE & KOPI KENANGAN) ---
     if (data.startsWith('order_service_')) {
         
+        // Ambil ID Layanan dari callback data
         const targetServiceId = parseInt(data.split('_')[2]); 
         
+        // --- KRUSIAL: Menentukan OTP ID berdasarkan Service ID ---
         const otpServiceId = (targetServiceId === TARGET_SERVICE_KENANGAN) ? OTP_ID_KENANGAN : OTP_ID_FORE;
+        // -----------------------------------------------------------
         
         // Hapus pesan inline keyboard Pilih Layanan yang baru saja diklik
         if (message.text.includes("Pilih Layanan")) {
@@ -522,7 +594,7 @@ bot.on('callback_query', async (callbackQuery) => {
             if (isSuccess || isAlreadyCanceled) {
                 logAndEdit(chatId, message.message_id, `✅ *Pesanan DIBATALKAN!* Order ID: \`${order_id}\``, { 
                     parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: [] } 
+                    reply_markup: { inline_keyboard: [] } // Hapus tombol
                 });
                 writeLog(`[ACTION] Pesanan ID ${order_id} dibatalkan oleh ${chatId}.`);
                 updateHistory(chatId, order_id, null, null, 'CANCELED');
@@ -561,7 +633,7 @@ bot.on('callback_query', async (callbackQuery) => {
             if (isSuccess || isAlreadyFinished) {
                 logAndEdit(chatId, message.message_id, `✅ *Pesanan SELESAI!* Order ID: \`${order_id}\``, { 
                     parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: [] } 
+                    reply_markup: { inline_keyboard: [] } // Hapus tombol
                 });
                 writeLog(`[ACTION] Pesanan ID ${order_id} diselesaikan oleh ${chatId}.`);
                 updateHistory(chatId, order_id, null, null, 'FINISHED');
