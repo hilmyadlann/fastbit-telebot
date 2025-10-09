@@ -7,10 +7,8 @@ const TELEGRAM_BOT_TOKEN = "7348650612:AAGxw63Hs1bzLBr994f07dkMeRNwI_-_f9w";
 
 // --- KONFIGURASI API KEY (Daftar API Key untuk Failover) ---
 const API_KEY_LIST = [
-    "LAF19i8MvV1n8P5wdDmEmwIRBIby4zGT", 
-    "jxA5WWudkNyCsavNUJiTRktDoiJ4i358",
-    "y5OmMGlJY9SCRuLo99WzHSZGtNMvPHwd",
-    "YTJwp36jS0THRiJ74YWs8Vxj7TxYIQAU"
+    "WQTbogAvgRARIqYnVKajlvP2tQvu5Ku3", 
+    "jxA5WWudkNyCsavNUJiTRktDoiJ4i358"
 ];
 
 let currentKeyIndex = 0;
@@ -18,7 +16,7 @@ let currentKeyIndex = 0;
 
 // --- Konstanta Logging ---
 const LOG_FILE = 'aktivitas_bot.txt';
-const HISTORY_FILE = 'riwayat_order.json'; // File penyimpanan riwayat
+const HISTORY_FILE = 'riwayat_order.json'; 
 
 // --- Fungsi Utilitas File System ---
 function writeLog(message) {
@@ -56,7 +54,6 @@ function updateHistory(chatId, orderId, number, service, status) {
         history[chatId] = [];
     }
     
-    // Hapus entri lama jika orderId sudah ada, atau tambahkan yang baru
     const index = history[chatId].findIndex(item => item.id === orderId);
     const timestamp = new Date().toLocaleString('id-ID');
 
@@ -150,13 +147,12 @@ async function tryGenerateOrderWithFailover(url_generate) {
                 return { success: true, result, apiKey: currentApiKey };
             }
             
-            // Logika pengecekan error spesifik dari API (kode 200, tapi pesan error)
             const errorMessage = result.message || '';
             if (errorMessage.toLowerCase().includes('insufficient balance')) {
                 if (attempts < maxFailoverAttempts - 1) {
                     switchApiKey();
                     attempts++;
-                    continue; // Coba lagi di iterasi berikutnya
+                    continue; 
                 } else {
                     return { success: false, result, message: "Semua API Key kehabisan saldo." };
                 }
@@ -167,12 +163,11 @@ async function tryGenerateOrderWithFailover(url_generate) {
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
             
-            // Logika Deteksi Insufficient Balance/Unauthorized
             let shouldFailover = false;
 
             if (error.response?.status === 400 && errorMsg.toLowerCase().includes('insufficient balance')) {
                 shouldFailover = true;
-            } else if (error.response?.status === 401 || error.response?.status === 403 || errorMsg.toLowerCase().includes('invalid token')) { // Tambah 403 (Forbidden)
+            } else if (error.response?.status === 401 || error.response?.status === 403 || errorMsg.toLowerCase().includes('invalid token')) { 
                 shouldFailover = true;
             }
 
@@ -272,12 +267,12 @@ bot.onText(/\/start/, (msg) => {
     const chatId = msg.chat.id;
     writeLog(`User ${chatId} memulai chat.`);
     
+    // REPLY KEYBOARD TANPA CEK SALDO
     const options = {
         reply_markup: {
             keyboard: [
                 [{ text: '☕ Beli Kode OTP' }], 
-                [{ text: '💰 Cek Saldo' }, { text: '📜 Riwayat Order' }],
-                [{ text: '🗑️ Hapus Riwayat' }] 
+                [{ text: '📜 Riwayat Order' }, { text: '🗑️ Hapus Riwayat' }] 
             ],
             resize_keyboard: true
         }
@@ -289,35 +284,7 @@ bot.onText(/\/start/, (msg) => {
 
 
 // =======================================================
-// 2. HANDLER /ceksaldo
-// =======================================================
-bot.onText(/(\/ceksaldo|💰 Cek Saldo)/, async (msg) => {
-    const chatId = msg.chat.id;
-    writeLog(`User ${chatId} mengecek saldo.`);
-    try {
-        const headers = { "X-API-KEY": getCurrentApiKey(), "Content-Type": "application/json" };
-        const response = await axios.get(PROFILE_URL, { headers });
-        const data = response.data;
-        if (data.status === 200 && data.user) {
-            const user_data = data.user;
-            const name = user_data.name || "Nama tidak ditemukan";
-            const active_balance = user_data.active_balance || "Rp 0"; 
-            const message = `*Laporan Saldo*\n\n👤 *Nama:* \`${name}\`\n💰 *Saldo Aktif Anda:* \`${active_balance}\`\n_(API Key: ${getCurrentApiKey().substring(0, 5)}...)_`;
-            logAndSend(chatId, message, { parse_mode: 'Markdown' });
-        } else {
-            logAndSend(chatId, `⚠️ Gagal mengecek saldo. Pesan API: ${data.message || 'Format respons tidak valid'}`);
-        }
-    } catch (error) {
-        let errorMessage = "❌ Terjadi kesalahan saat menghubungi API (Cek Saldo).";
-        if (error.response && error.response.status) { errorMessage = `❌ Kesalahan HTTP: Kode ${error.response.status}.`; } else { errorMessage += `\nDetail: ${error.message}`; }
-        logAndSend(chatId, errorMessage);
-        writeLog(`[ERROR] Gagal Cek Saldo untuk ${chatId}: ${error.message}`);
-    }
-});
-
-
-// =======================================================
-// 3. HANDLER RIWAYAT ORDER (FINAL TAMPILAN BARU)
+// 3. HANDLER RIWAYAT ORDER
 // =======================================================
 bot.onText(/(\/riwayat|\s*📜\s*Riwayat Order)/i, async (msg) => {
     const chatId = msg.chat.id;
@@ -330,7 +297,6 @@ bot.onText(/(\/riwayat|\s*📜\s*Riwayat Order)/i, async (msg) => {
         return logAndSend(chatId, "Riwayat order Anda masih kosong.");
     }
 
-    // Mengambil SELURUH riwayat dan mengelompokkan
     const allHistory = userHistory.reverse(); 
 
     const groupedHistory = allHistory.reduce((acc, item) => {
@@ -345,7 +311,6 @@ bot.onText(/(\/riwayat|\s*📜\s*Riwayat Order)/i, async (msg) => {
 
     for (const service in groupedHistory) {
         message += `*${service}:*\n`;
-        // Hapus duplikasi nomor yang mungkin terjadi akibat update status
         const uniqueNumbers = [...new Set(groupedHistory[service])]; 
         uniqueNumbers.forEach(number => {
             message += `\`${number}\`\n`;
@@ -404,16 +369,15 @@ bot.on('callback_query', async (callbackQuery) => {
     const chatId = message.chat.id;
     const data = callbackQuery.data;
 
-    // --- FIX: Tangani tombol salin di sini (agar pop-up muncul) ---
+    // --- Tangani tombol salin di sini ---
     if (data.startsWith('copy_')) {
         const number = data.split('_')[1];
-        // Menggunakan show_alert agar pop-up lebih besar dan mudah disalin
-        bot.answerCallbackQuery(callbackQuery.id, { text: `Nomor disalin: ${number}`, show_alert: true }); 
+        bot.answerCallbackQuery(callbackQuery.id, { text: `Nomor disalin: ${number}`, show_alert: true });
         writeLog(`[ACTION] User ${chatId} menyalin nomor ${number}.`);
-        return; // Hentikan pemrosesan
+        return; 
     }
 
-    // FIX: Menangani ETELEGRAM error, hanya jawab jika query tidak terlalu lama
+    // Tangani ETELEGRAM error, hanya jawab jika query tidak terlalu lama
     try {
         bot.answerCallbackQuery(callbackQuery.id);
     } catch (e) {
@@ -423,12 +387,9 @@ bot.on('callback_query', async (callbackQuery) => {
     // --- ALUR ORDER BARU (FORE COFFEE & KOPI KENANGAN) ---
     if (data.startsWith('order_service_')) {
         
-        // Ambil ID Layanan dari callback data
         const targetServiceId = parseInt(data.split('_')[2]); 
         
-        // --- KRUSIAL: Menentukan OTP ID berdasarkan Service ID ---
         const otpServiceId = (targetServiceId === TARGET_SERVICE_KENANGAN) ? OTP_ID_KENANGAN : OTP_ID_FORE;
-        // -----------------------------------------------------------
         
         // Hapus pesan inline keyboard Pilih Layanan yang baru saja diklik
         if (message.text.includes("Pilih Layanan")) {
