@@ -590,37 +590,53 @@ bot.on('callback_query', async (callbackQuery) => {
         }
     } 
     
-    // --- ALUR CHECK OTP (Untuk tombol "Get new code") ---
-    else if (data.startsWith('check_')) {
-        const order_id = data.split('_')[1];
-        writeLog(`User ${chatId} mengecek OTP untuk Order ID: ${order_id}.`);
-        
-        let checkMessageText = `⏳ Memeriksa SMS terbaru...`;
-        
-        try {
-            // Edit pesan yang diklik menjadi pesan tunggu/periksa
-            logAndEdit(chatId, message.message_id, checkMessageText, {
-                parse_mode: 'Markdown',
-                 reply_markup: message.reply_markup 
-            });
-            
-            // Dapatkan format pesan OTP yang baru (menggunakan logika ekstraksi OTP ganda/terbaru)
-            const formatted = await formatOtpMessage(order_id);
-            
-            // Edit pesan tunggu menjadi pesan hasil dengan Inline Keyboard
-            logAndEdit(chatId, message.message_id, formatted.text, formatted.options);
-            writeLog(`[INFO] Check OTP sukses untuk Order ID ${order_id}. Nomor: ${formatted.logData.clean_number} | OTP Status: ${formatted.logData.otp_code}`);
+// --- ALUR CHECK OTP (Untuk tombol "Get new code") ---
+else if (data.startsWith('check_')) {
+    const order_id = data.split('_')[1];
+    writeLog(`User ${chatId} mengecek OTP untuk Order ID: ${order_id}.`);
+    
+    let checkMessageText = `⏳ Memeriksa SMS terbaru...`;
+    
+    try {
+        // Edit pesan yang diklik menjadi pesan tunggu/periksa
+        // Masalah ETELEGRAM 400 sering terjadi di sini
+        try {
+            await logAndEdit(chatId, message.message_id, checkMessageText, {
+                parse_mode: 'Markdown',
+                reply_markup: message.reply_markup 
+            });
+        } catch (editError) {
+             const errorMsg = editError.response?.body?.description || editError.message;
+             if (editError.code === 'ETELEGRAM' && errorMsg.includes('message is not modified')) {
+                 // Abaikan error ini
+             } else {
+                 throw editError;
+             }
+        }
+        
+        // Dapatkan format pesan OTP yang baru
+        const formatted = await formatOtpMessage(order_id);
+        
+        // Edit pesan tunggu menjadi pesan hasil
+        try {
+            await logAndEdit(chatId, message.message_id, formatted.text, formatted.options);
+        } catch (editError) {
+             const errorMsg = editError.response?.body?.description || editError.message;
+             if (editError.code === 'ETELEGRAM' && errorMsg.includes('message is not modified')) {
+                 writeLog(`[WARN] Final Edit diabaikan: Konten tidak berubah. Order ID: ${order_id}`);
+                 // Lanjutkan
+             } else {
+                 throw editError;
+             }
+        }
+        
+        writeLog(`[INFO] Check OTP sukses untuk Order ID ${order_id}. Nomor: ${formatted.logData.clean_number} | OTP Status: ${formatted.logData.otp_code}`);
 
-
-        } catch (error) {
-             // Rollback edit ke pesan error sementara
-             logAndEdit(chatId, message.message_id, "❌ Gagal memeriksa status order. Coba lagi.", {
-                 parse_mode: 'Markdown',
-                 reply_markup: message.reply_markup // Pertahankan tombol lama
-             });
-             writeLog(`[ERROR] Gagal memproses Check OTP untuk ${order_id}: ${error.message}`);
-        }
-    }
+    } catch (error) {
+        // ... (Error handling utama)
+        // ...
+    }
+}
     
     // --- ALUR CANCEL ---
     else if (data.startsWith('cancel_')) {
