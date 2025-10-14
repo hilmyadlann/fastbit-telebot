@@ -7,10 +7,7 @@ const TELEGRAM_BOT_TOKEN = "7348650612:AAGxw63Hs1bzLBr994f07dkMeRNwI_-_f9w";
 
 // --- KONFIGURASI API KEY (Daftar API Key untuk Failover) ---
 const API_KEY_LIST = [
-    { key: "jxA5WWudkNyCsavNUJiTRktDoiJ4i358", limit_reached_at: null, index: 0 },
-    { key: "YTJwp36jS0THRiJ74YWs8Vxj7TxYIQAU", limit_reached_at: null, index: 1 },
-    { key: "y5OmMGlJY9SCRuLo99WzHSZGtNMvPHwd", limit_reached_at: null, index: 2 },
-    { key: "LAF19i8MvV1n8P5wdDmEmwIRBIby4zGT", limit_reached_at: null, index: 3 }
+    { key: "jxA5WWudkNyCsavNUJiTRktDoiJ4i358", limit_reached_at: null, index: 0 }
 ];
 
 let currentKeyIndex = 0;
