@@ -107,13 +107,24 @@ const TARGET_SERVICE_KENANGAN = 1371;
 // DAFTAR PRIORITAS UNTUK FORE COFFEE
 const FORE_SERVICE_PRIORITY = [
     { service_id: 1368, otp_id: 145163, name: "FORE COFFEE (P1)" },
+    { service_id: 1368, otp_id: 145980, name: "FORE COFFEE (P2)" },
+    { service_id: 1368, otp_id: 145987, name: "FORE COFFEE (P3)" },
+    { service_id: 1368, otp_id: 145979, name: "FORE COFFEE (P4)" },
+    { service_id: 1368, otp_id: 145990, name: "FORE COFFEE (P5)" },
+    { service_id: 1368, otp_id: 145982, name: "FORE COFFEE (P6)" },
+    { service_id: 1368, otp_id: 145981, name: "FORE COFFEE (P7)" },
+    { service_id: 1368, otp_id: 145977, name: "FORE COFFEE (P8)" },
+    { service_id: 1368, otp_id: 145978, name: "FORE COFFEE (P9)" },
+    { service_id: 1368, otp_id: 145976, name: "FORE COFFEE (P10)" },
+    { service_id: 1368, otp_id: 145163, name: "FORE COFFEE (P11)" },
+
     // Tambahkan jika ada alternatif Fore
 ];
 
 // DAFTAR PRIORITAS UNTUK KOPI KENANGAN (Prioritas 1 akan dicoba lebih dulu)
 const KENANGAN_SERVICE_PRIORITY = [
     { service_id: 1371, otp_id: 144477, name: "KOPI KENANGAN (P1)" }, // ID Lama/Utama
-    { service_id: 1372, otp_id: 145992, name: "KOPI KENANGAN (P2)" }, // ID Baru/Alternatif
+    { service_id: 1371, otp_id: 145992, name: "KOPI KENANGAN (P2)" }, // ID Baru/Alternatif
     // Tambahkan service ID baru di sini jika ada lagi
 ];
 // ----------------------------------------
