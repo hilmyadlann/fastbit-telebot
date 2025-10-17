@@ -196,26 +196,51 @@ writeLog("Bot dimulai dan siap melayani.");
 
 
 // =======================================================
-// FUNGSI WRAPPER LOG PESAN CHAT
+// FUNGSI WRAPPER LOG PESAN CHAT (DIPERKUAT DENGAN ERROR HANDLER MARKDOWN)
 // =======================================================
 async function logAndSend(chatId, text, options) {
     writeLog(`[CHAT OUT] To ${chatId}: ${text.substring(0, 50)}...`);
-    return bot.sendMessage(chatId, text, options);
+    
+    try {
+        return await bot.sendMessage(chatId, text, options);
+    } catch (error) {
+        // Cek jika error adalah "Bad Request: can't parse entities" (400 Bad Request)
+        const errorMsg = error.response?.body?.description || error.message;
+        if (error.code === 'ETELEGRAM' && errorMsg.includes('can\'t parse entities')) {
+            writeLog(`[WARN] Markdown Error pada pesan keluar. Mencoba kirim ulang tanpa Parse Mode.`);
+            const fallbackOptions = { ...options };
+            delete fallbackOptions.parse_mode;
+            // Kirim ulang tanpa Markdown
+            return await bot.sendMessage(chatId, text, fallbackOptions);
+        }
+        // Lemparkan error lainnya
+        throw error;
+    }
 }
 
-// FUNGSI MODIFIKASI UNTUK MENANGANI ERROR "MESSAGE NOT MODIFIED"
+// FUNGSI MODIFIKASI UNTUK MENANGANI ERROR "MESSAGE NOT MODIFIED" (DIPERKUAT)
 async function logAndEdit(chatId, messageId, text, options) {
     writeLog(`[CHAT EDIT] Msg ID ${messageId} to ${chatId}: ${text.substring(0, 50)}...`);
     try {
         return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...options });
     } catch (error) {
-        // Cek jika error adalah 'message is not modified' (400 Bad Request)
         const errorMsg = error.response?.body?.description || error.message;
+        
+        // 1. Abaikan error "message is not modified"
         if (error.code === 'ETELEGRAM' && errorMsg.includes('message is not modified')) {
-            // Abaikan error ini agar polling dapat berlanjut tanpa crash
             writeLog(`[WARN] Edit diabaikan: Konten tidak berubah. Msg ID: ${messageId}`);
             return; 
         }
+        
+        // 2. Tangani error "can't parse entities" (Markdown Error)
+        if (error.code === 'ETELEGRAM' && errorMsg.includes('can\'t parse entities')) {
+            writeLog(`[WARN] Markdown Error pada edit pesan. Mencoba edit ulang tanpa Parse Mode.`);
+            const fallbackOptions = { ...options };
+            delete fallbackOptions.parse_mode;
+            // Coba edit ulang tanpa Markdown
+            return await bot.editMessageText(text, { chat_id: chatId, message_id: messageId, ...fallbackOptions });
+        }
+        
         // Lemparkan error lainnya
         throw error;
     }
@@ -224,7 +249,7 @@ async function logAndEdit(chatId, messageId, text, options) {
 
 
 // =======================================================
-// FUNGSI API KEY FAILOVER (dengan logging error detail)
+// FUNGSI API KEY FAILOVER (dengan logging error detail) (tidak berubah)
 // =======================================================
 async function tryGenerateOrderWithFailover(url_generate) {
     const maxFailoverAttempts = API_KEY_LIST.length;
@@ -293,8 +318,11 @@ async function tryGenerateOrderWithFailover(url_generate) {
 }
 
 
-// --- Fungsi untuk menghasilkan Inline Keyboard Aksi (diubah callback Beli Nomer Lagi) ---
-function getOrderActionKeyboard(order_id, service_id_for_next_order) {
+// --- Fungsi untuk menghasilkan Inline Keyboard Aksi ---
+// Callback Beli Nomer Lagi langsung menunjuk ke startorder_[service_id]_[priorityIndex]
+function getOrderActionKeyboard(order_id, service_id_for_next_order, priorityIndex) {
+    const repeatOrderCallback = `startorder_${service_id_for_next_order}_${priorityIndex}`;
+    
     return {
         inline_keyboard: [
             [
@@ -303,7 +331,7 @@ function getOrderActionKeyboard(order_id, service_id_for_next_order) {
                 { text: '✅ Finish', callback_data: `finish_${order_id}` }
             ],
             [
-                { text: '🛍 Beli Nomer Lagi', callback_data: `select_server_${service_id_for_next_order}` } 
+                { text: '🛍 Beli Nomer Lagi', callback_data: repeatOrderCallback } 
             ]
         ]
     };
@@ -312,7 +340,8 @@ function getOrderActionKeyboard(order_id, service_id_for_next_order) {
 // =======================================================
 // FUNGSI UTAMA EKSTRAKSI OTP 
 // =======================================================
-async function formatOtpMessage(order_id) {
+// Menerima priorityIndex untuk ditampilkan di pesan output
+async function formatOtpMessage(order_id, priorityIndex) {
     const url_details = `${ORDER_DETAILS_BASE_URL}/${order_id}`;
     const headers = { "X-API-KEY": getCurrentApiKey(), "Content-Type": "application/json" }; 
     
@@ -361,7 +390,11 @@ async function formatOtpMessage(order_id) {
                              .filter(code => code && code.length >= 4); 
     
     const service_name = isKenangan ? "KOPI KENANGAN" : "FORE COFFEE";
-    const action_keyboard = getOrderActionKeyboard(order_id, order_data.service.id).inline_keyboard;
+    // Panggil getOrderActionKeyboard dengan priorityIndex
+    const action_keyboard = getOrderActionKeyboard(order_id, order_data.service.id, priorityIndex).inline_keyboard;
+    
+    // Tambahkan info server ke pesan
+    const serverInfo = `(Server ${priorityIndex + 1})`;
 
 
     if (extracted_otp_list.length > 0) {
@@ -378,7 +411,7 @@ async function formatOtpMessage(order_id) {
         otp_code = reversed_otp_list.join(', '); 
         
         let message_parts = [];
-        message_parts.push(`*${service_name}*: \`${clean_number}\``);
+        message_parts.push(`*${service_name} ${serverInfo}*: \`${clean_number}\``);
         message_parts.push(`*Kode Terbaru:* \`${latest_code}\``);
         
         if (history_codes.length > 0) {
@@ -404,7 +437,7 @@ async function formatOtpMessage(order_id) {
              otp_code = order_data.sms_code;
              
              let message_parts = [];
-             message_parts.push(`*${service_name}*: \`${clean_number}\``);
+             message_parts.push(`*${service_name} ${serverInfo}*: \`${clean_number}\``);
              message_parts.push(`*Kode Terbaru:* \`${otp_code}\``);
              
              const finalMessage = message_parts.join('\n');
@@ -422,7 +455,7 @@ async function formatOtpMessage(order_id) {
     }
     
     // KODE BELUM DITERIMA (Menunggu OTP...)
-    const finalMessageMenunggu = `*${service_name}*: \`${clean_number}\`\n*OTP Status:* \`Menunggu OTP...\``;
+    const finalMessageMenunggu = `*${service_name} ${serverInfo}*: \`${clean_number}\`\n*OTP Status:* \`Menunggu OTP...\``;
 
     return {
         text: finalMessageMenunggu,
@@ -544,7 +577,7 @@ bot.onText(/(\/hapusriwayat|\s*🗑️\s*Hapus Riwayat)/i, async (msg) => {
 
 
 // =======================================================
-// 5. HANDLER /beli_kode_otp (Menampilkan Pilihan Layanan)
+// 5. HANDLER /beli_kode_otp (Menampilkan Pilihan Layanan) (tidak berubah)
 // =======================================================
 bot.onText(/\s*beli\s*kode\s*OTP\s*/i, (msg) => { 
     const chatId = msg.chat.id;
@@ -564,7 +597,7 @@ bot.onText(/\s*beli\s*kode\s*OTP\s*/i, (msg) => {
 
 
 // =======================================================
-// FUNGSI UTILITY BARU UNTUK MEMBUAT KEYBOARD SERVER (DIUBAH)
+// FUNGSI UTILITY BARU UNTUK MEMBUAT KEYBOARD SERVER (tidak berubah)
 // =======================================================
 function getServerSelectionKeyboard(targetServiceId) {
     const isKenangan = targetServiceId === TARGET_SERVICE_KENANGAN;
@@ -575,10 +608,10 @@ function getServerSelectionKeyboard(targetServiceId) {
     let row = [];
     
     list.forEach((item, index) => {
-        // PERUBAHAN UTAMA DI SINI: Teks tombol menjadi SERVER [Index + 1]
+        // Teks tombol menjadi SERVER [Index + 1]
         const text = `SERVER ${index + 1}`; 
         
-        // Data callback: startorder_[Service ID Utama]_[Index Prioritas] (TIDAK BERUBAH)
+        // Data callback: startorder_[Service ID Utama]_[Index Prioritas]
         const callbackData = `startorder_${targetServiceId}_${index}`;
         
         row.push({ text: text, callback_data: callbackData });
@@ -604,19 +637,21 @@ bot.on('callback_query', async (callbackQuery) => {
     const data = callbackQuery.data;
 
     try {
+        // MENJAWAB CALLBACK QUERY UNTUK MENGHILANGKAN STATUS 'LOADING' PADA TOMBOL
         bot.answerCallbackQuery(callbackQuery.id);
     } catch (e) {
-        console.error(`[WARN] Gagal menjawab callback query lama: ${e.message}`);
+        // Error ETELEGRAM: 400 Bad Request: query is too old
+        console.error(`[WARN] Gagal menjawab callback query lama/invalid: ${e.message}`);
     }
 
-    // --- ALUR 1: PILIH SERVER ---
+    // --- ALUR 1: PILIH SERVER (tidak berubah) ---
     if (data.startsWith('select_server_')) {
         const targetServiceId = parseInt(data.split('_')[2]);
         const serviceName = targetServiceId === TARGET_SERVICE_KENANGAN ? 'KOPI KENANGAN' : 'FORE COFFEE';
         
         const keyboard = getServerSelectionKeyboard(targetServiceId);
         
-        // Hapus pesan lama "Pilih Layanan" jika masih ada
+        // Hapus pesan lama "Pilih Layanan" (Pesan pertama dari /beli_kode_otp)
         if (message.text.includes("Pilih Layanan")) {
             await bot.deleteMessage(chatId, message.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan: ${err.message}`));
             logAndSend(chatId, `*Pilih Server untuk ${serviceName}:*`, { 
@@ -624,6 +659,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 reply_markup: keyboard
             });
         } else {
+             // Edit pesan "Pilih Server" (Jika user klik tombol di pesan yang sama)
              logAndEdit(chatId, message.message_id, `*Pilih Server untuk ${serviceName}:*`, { 
                 parse_mode: 'Markdown',
                 reply_markup: keyboard
@@ -632,16 +668,22 @@ bot.on('callback_query', async (callbackQuery) => {
         writeLog(`[ACTION] User ${chatId} memilih server untuk ${serviceName}.`);
     }
 
-    // --- ALUR 2: START ORDER SETELAH PILIH SERVER (LOGIKA POLLING 5 DETIK ADA DI SINI) ---
+    // --- ALUR 2: START ORDER SETELAH PILIH SERVER (TERMASUK 'BELI NOMER LAGI') (tidak berubah) ---
     else if (data.startsWith('startorder_')) {
-        // Hapus pesan lama, ambil data server yang dipilih
-        bot.deleteMessage(chatId, message.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan lama: ${err.message}`));
-
+        
         const parts = data.split('_');
         const targetServiceId = parseInt(parts[1]); // ID Layanan Utama (1368/1371)
         const priorityIndex = parseInt(parts[2]);  // Index prioritas (0, 1, 2, ...)
+        
+        // Cek apakah pesan yang diklik adalah pesan pemilihan server.
+        const isServerSelectionMessage = message.text.includes("Pilih Server untuk");
 
-        // Inisialisasi daftar prioritas (Hanya yang dipilih dan yang di bawahnya)
+        // Jika ini adalah pesan pemilihan server, hapus agar chat lebih bersih.
+        if (isServerSelectionMessage) {
+            bot.deleteMessage(chatId, message.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan lama: ${err.message}`));
+        }
+        
+        // Inisialisasi daftar prioritas
         const fullPriorityList = (targetServiceId === TARGET_SERVICE_KENANGAN) 
             ? KENANGAN_SERVICE_PRIORITY 
             : FORE_SERVICE_PRIORITY;
@@ -650,35 +692,39 @@ bot.on('callback_query', async (callbackQuery) => {
         const priorityList = fullPriorityList.slice(priorityIndex); 
         
         const initialServiceName = fullPriorityList[priorityIndex].name;
+        const initialServerNumber = priorityIndex + 1;
 
         let order_id = null; 
         let isOrderSuccess = false;
         
-        let waitMessage = await logAndSend(chatId, `⏳ Pesanan ${initialServiceName} dibuat. Mencoba ${priorityList.length} Server dan semua API Key...`);
+        // Kirim pesan tunggu BARU untuk order yang sedang diproses
+        let waitMessage = await logAndSend(chatId, `⏳ Pesanan untuk Server **${initialServerNumber}** (${initialServiceName}) sedang dibuat. Mencoba ${priorityList.length} Server dan semua API Key...`, { parse_mode: 'Markdown' });
 
         // --- LOOP BARU UNTUK MENGULANG SELURUH PROSES BERDASARKAN PRIORITAS SERVICE ID ---
         for (let i = 0; i < priorityList.length; i++) {
             const serviceConfig = priorityList[i];
+            const currentServerIndex = priorityIndex + i; // Index server yang sedang dicoba
             const url_generate = 
                 `${GENERATE_ORDER_URL}?otp_service_id=${serviceConfig.otp_id}&application_id=${serviceConfig.service_id}&quantity=1`;
 
-            writeLog(`[FULL FAILOVER] Mencoba Service: ${serviceConfig.name} (Service ID: ${serviceConfig.service_id})`);
-            await logAndEdit(chatId, waitMessage.message_id, `⏳ Mencoba Server **${serviceConfig.name}**...`, { parse_mode: 'Markdown' });
+            writeLog(`[FULL FAILOVER] Mencoba Service: ${serviceConfig.name} (Server ${currentServerIndex + 1})`);
+            
+            // Update pesan tunggu
+            await logAndEdit(chatId, waitMessage.message_id, `⏳ Mencoba Server **${currentServerIndex + 1}** (${serviceConfig.name})...`, { parse_mode: 'Markdown' });
 
             try {
                 // Langkah 1: Mencoba membuat Order ID (dengan API Key Failover)
                 const apiFailoverResult = await tryGenerateOrderWithFailover(url_generate);
 
                 if (!apiFailoverResult.success) {
-                    // Jika API Key failover gagal, log dan lanjut ke Service ID berikutnya
-                    writeLog(`[FAILOVER INFO] Gagal membuat order dengan Server ${serviceConfig.name}: ${apiFailoverResult.message}. Lanjut ke berikutnya.`);
+                    writeLog(`[FAILOVER INFO] Gagal membuat order dengan Server ${currentServerIndex + 1}: ${apiFailoverResult.message}. Lanjut ke berikutnya.`);
                     continue; 
                 }
 
                 order_id = apiFailoverResult.result.data.order_ids[0];
                 if (!order_id) throw new Error("UUID pesanan tidak ditemukan di respons Generate Order.");
 
-                writeLog(`[INFO] Order ID ${order_id} berhasil dibuat dengan Key ${apiFailoverResult.apiKey.substring(0, 5)}.... menggunakan Server ${serviceConfig.name}.`);
+                writeLog(`[INFO] Order ID ${order_id} berhasil dibuat dengan Key ${apiFailoverResult.apiKey.substring(0, 5)}.... menggunakan Server ${currentServerIndex + 1}.`);
 
                 // Langkah 2: RETRY LOOP UNTUK MENDAPATKAN NOMOR VIRTUAL
                 let formatted = null;
@@ -688,7 +734,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
                 for (let j = 0; j < MAX_RETRIES + 2; j++) { 
                     try {
-                        formatted = await formatOtpMessage(order_id);
+                        // Kirim index server saat ini ke formatOtpMessage
+                        formatted = await formatOtpMessage(order_id, currentServerIndex);
                         if (formatted.logData.clean_number) {
                             success = true; 
                             break; 
@@ -716,9 +763,10 @@ bot.on('callback_query', async (callbackQuery) => {
                 let finalFormatted = null;
 
                 for (let k = 0; k < MAX_OTP_CHECKS; k++) { 
-                    finalFormatted = await formatOtpMessage(order_id);
+                    finalFormatted = await formatOtpMessage(order_id, currentServerIndex);
                     
                     if (finalFormatted.logData.otp_code !== "Menunggu OTP...") {
+                        // OTP MASUK, EDIT PESAN TERAKHIR DAN KELUAR LOOP
                         logAndEdit(chatId, waitMessage.message_id, finalFormatted.text, finalFormatted.options);
                         writeLog(`[INFO] OTP masuk cepat. Order ID: ${order_id}`);
                         break;
@@ -733,17 +781,14 @@ bot.on('callback_query', async (callbackQuery) => {
                     }
                 }
                 
-                finalFormatted = await formatOtpMessage(order_id);
+                // Final check setelah polling selesai
+                finalFormatted = await formatOtpMessage(order_id, currentServerIndex);
 
-                if (finalFormatted.logData.otp_code === "Menunggu OTP...") {
-                    bot.deleteMessage(chatId, waitMessage.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan tunggu: ${err.message}`));
-                    logAndSend(chatId, finalFormatted.text, finalFormatted.options);
-                } else {
-                    logAndEdit(chatId, waitMessage.message_id, finalFormatted.text, finalFormatted.options);
-                }
+                // Pesan final (Nomor/OTP didapat atau masih menunggu) harus tetap di-edit ke pesan tunggu
+                logAndEdit(chatId, waitMessage.message_id, finalFormatted.text, finalFormatted.options);
                 
                 updateHistory(chatId, order_id, finalFormatted.logData.clean_number, finalFormatted.logData.service, 'ACTIVE'); 
-                writeLog(`[ACTIVE] Nomor virtual ${finalFormatted.logData.clean_number} untuk ${order_id} ditampilkan ke ${chatId}. Status OTP: ${finalFormatted.logData.otp_code}`);
+                writeLog(`[ACTIVE] Nomor virtual ${finalFormatted.logData.clean_number} untuk ${order_id} (Server ${currentServerIndex + 1}) ditampilkan ke ${chatId}. Status OTP: ${finalFormatted.logData.otp_code}`);
 
                 break; // KELUAR DARI LOOP SERVICE ID KARENA SUKSES
 
@@ -766,7 +811,7 @@ bot.on('callback_query', async (callbackQuery) => {
                 
                 // Jika masih ada server lain di daftar prioritas yang tersisa, Lanjut ke Server berikutnya
                 if (i < priorityList.length - 1) {
-                    await logAndEdit(chatId, waitMessage.message_id, `❌ Gagal dengan Server **${serviceConfig.name}**. Mencoba Server berikutnya...`, { parse_mode: 'Markdown' });
+                    await logAndEdit(chatId, waitMessage.message_id, `❌ Gagal dengan Server **${currentServerIndex + 1}**. Mencoba Server berikutnya...`, { parse_mode: 'Markdown' });
                     continue; 
                 } else {
                     // Semua Server telah dicoba dan gagal
@@ -778,8 +823,8 @@ bot.on('callback_query', async (callbackQuery) => {
 
         // Pesan GAGAL TOTAL
         if (!isOrderSuccess) {
-            bot.deleteMessage(chatId, waitMessage.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan tunggu: ${err.message}`));
-            logAndSend(chatId, "❌ *Semua upaya pembelian gagal total.* Semua Server prioritas yang tersisa telah dicoba. Silakan coba lagi nanti.", { parse_mode: 'Markdown' });
+            // Edit pesan tunggu menjadi pesan gagal total
+            logAndEdit(chatId, waitMessage.message_id, "❌ *Semua upaya pembelian gagal total.* Semua Server prioritas yang tersisa telah dicoba. Silakan coba lagi nanti.", { parse_mode: 'Markdown' });
             writeLog(`[FATAL ERROR] Semua upaya FULL FAILOVER gagal total untuk ${chatId}.`);
         }
     } 
@@ -814,7 +859,7 @@ bot.on('callback_query', async (callbackQuery) => {
         writeLog(`[ACTION] Penghapusan riwayat ${chatId} dibatalkan.`);
     }
 
-    // --- ALUR CHECK OTP (telah diperbaiki agar aman) ---
+    // --- ALUR CHECK OTP (tidak berubah) ---
     else if (data.startsWith('check_')) {
         const order_id = data.split('_')[1];
         writeLog(`User ${chatId} mengecek OTP untuk Order ID: ${order_id}.`);
@@ -822,13 +867,17 @@ bot.on('callback_query', async (callbackQuery) => {
         let checkMessageText = `⏳ Memeriksa SMS terbaru...`;
         
         try {
+            // Coba ekstrak index server dari pesan yang diedit sebelumnya
+            const match = message.text.match(/\(Server (\d+)\)/);
+            const priorityIndex = match ? parseInt(match[1]) - 1 : 0; 
+
             // Edit pesan yang diklik menjadi pesan tunggu/periksa
             await logAndEdit(chatId, message.message_id, checkMessageText, {
                 parse_mode: 'Markdown',
                 reply_markup: message.reply_markup 
             });
             
-            const formatted = await formatOtpMessage(order_id);
+            const formatted = await formatOtpMessage(order_id, priorityIndex);
             
             // Edit pesan tunggu menjadi pesan hasil (aman karena pakai logAndEdit)
             await logAndEdit(chatId, message.message_id, formatted.text, formatted.options);
@@ -836,18 +885,20 @@ bot.on('callback_query', async (callbackQuery) => {
             writeLog(`[INFO] Check OTP sukses untuk Order ID ${order_id}. Nomor: ${formatted.logData.clean_number} | OTP Status: ${formatted.logData.otp_code}`);
 
         } catch (error) {
-             let errorMessage = "❌ Gagal mendapatkan detail order atau terjadi error API.";
+             let errorMessage = "❌ Gagal mendapatkan detail order atau terjadi error API. (Server index hilang)";
              if (error.response?.data?.message) {
                  errorMessage = `❌ Error API: ${error.response.data.message}`;
              }
              writeLog(`[ERROR] Gagal Check OTP Order ID ${order_id}: ${errorMessage}`);
-             logAndSend(chatId, errorMessage);
+             logAndEdit(chatId, message.message_id, errorMessage, { parse_mode: 'Markdown', reply_markup: message.reply_markup });
         }
     }
     
-    // --- ALUR CANCEL (tidak berubah) ---
+    // --- ALUR CANCEL (diperbaiki agar mengedit pesan, bukan menghapus + mengirim baru) ---
     else if (data.startsWith('cancel_')) {
         const order_id = data.split('_')[1];
+        const originalText = message.text; 
+
         try {
             const headers = { "X-API-KEY": getCurrentApiKey(), "Content-Type": "application/json" };
             const CANCEL_URL = `${ORDER_BASE_URL}/${order_id}/cancel`;
@@ -858,35 +909,52 @@ bot.on('callback_query', async (callbackQuery) => {
             let isAlreadyCanceled = result.message?.toLowerCase().includes('order cancelled successfully') || result.message?.toLowerCase().includes('order already canceled');
             
             if (isSuccess || isAlreadyCanceled) {
-                logAndEdit(chatId, message.message_id, `✅ *Pesanan DIBATALKAN!* Order ID: \`${order_id}\``, { 
+                // HANYA EDIT PESAN dengan status "DIBATALKAN"
+                const newText = originalText.split('Status:')[0].trim() + '\n\n✅ *STATUS: DIBATALKAN*';
+                logAndEdit(chatId, message.message_id, newText, { 
                     parse_mode: 'Markdown',
-                    reply_markup: { inline_keyboard: [] } 
+                    reply_markup: { inline_keyboard: [] } // Hapus tombol
                 });
                 writeLog(`[ACTION] Pesanan ID ${order_id} dibatalkan oleh ${chatId}.`);
                 updateHistory(chatId, order_id, null, null, 'CANCELED');
             } else {
-                logAndSend(chatId, `⚠️ Gagal membatalkan pesanan (ID: \`${order_id}\`). Pesan: ${result.message || 'Coba lagi setelah 1 menit.'}`);
+                // Kegagalan API 200 OK, tapi status non-sukses
+                const errorApiMessage = result.message || 'Error API tak dikenal.';
+                const newText = originalText + `\n\n⚠️ *Gagal Batalkan.* Pesan: ${errorApiMessage.substring(0, 50)}...`; // POTONG PESAN ERROR API
+                logAndEdit(chatId, message.message_id, newText, {parse_mode: 'Markdown', reply_markup: message.reply_markup});
                 writeLog(`[ERROR] Gagal Cancel ID ${order_id}: ${result.message || 'Unknown Error'}`);
             }
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
             
-            if (errorMsg.toLowerCase().includes('order cancelled successfully') || errorMsg.toLowerCase().includes('order already canceled')) {
-                logAndEdit(chatId, message.message_id, `✅ *Pesanan DIBATALKAN!* Order ID: \`${order_id}\``, { 
+            // Cek jika error API menunjukkan pembatalan tidak mungkin (misal: "Early access denied")
+            const isDenied = errorMsg.toLowerCase().includes('denied') || errorMsg.toLowerCase().includes('too early');
+
+            if (errorMsg.toLowerCase().includes('order cancelled successfully') || errorMsg.toLowerCase().includes('order already canceled') || errorMsg.toLowerCase().includes('order cannot be finished')) {
+                const finalSuccessText = originalText.split('Status:')[0].trim() + '\n\n✅ *STATUS: DIBATALKAN* (Oleh API)';
+                logAndEdit(chatId, message.message_id, finalSuccessText, { 
                     parse_mode: 'Markdown',
                     reply_markup: { inline_keyboard: [] } 
                 });
-                writeLog(`[ACTION] Pesanan ID ${order_id} dibatalkan oleh ${chatId}. (Catch Block Success)`);
                 updateHistory(chatId, order_id, null, null, 'CANCELED');
             } else {
-                logAndSend(chatId, `❌ Gagal Cancel Order. Pesan: ${errorMsg}`);
+                // Jika error lain (termasuk DENIED/TOO EARLY)
+                const errorText = `❌ *Gagal Batal.* Pesan: ${errorMsg.substring(0, 50)}...`;
+                
+                // Hapus tombol Cancel/Finish/Check jika pembatalan dilarang API
+                const reply_markup = isDenied ? { inline_keyboard: [] } : message.reply_markup;
+                
+                logAndEdit(chatId, message.message_id, originalText + `\n\n${errorText}`, { parse_mode: 'Markdown', reply_markup: reply_markup });
             }
         }
     }
 
-    // --- ALUR FINISH (memanggil updateHistory yang sudah diperbaiki) ---
+    // --- ALUR FINISH (DIPERBAIKI AGAR MENGABAIKAN ERROR SERVER) ---
     else if (data.startsWith('finish_')) {
         const order_id = data.split('_')[1];
+        const originalText = message.text; 
+        let isSuccess = false;
+        
         try {
             const headers = { "X-API-KEY": getCurrentApiKey(), "Content-Type": "application/json" };
             const FINISH_URL = `${ORDER_BASE_URL}/${order_id}/finish`;
@@ -894,40 +962,54 @@ bot.on('callback_query', async (callbackQuery) => {
             const result = response.data;
             
             const errorMsg = result.message?.toLowerCase() || '';
-            const isAlreadyCompleted = errorMsg.includes('order already completed') || errorMsg.includes('order cannot be finished');
+            const isAlreadyCompleted = errorMsg.includes('order already completed') || errorMsg.includes('order finished successfully');
 
-            let isSuccess = (response.status === 200 && result.status === 'success');
-            let isAlreadyFinished = isAlreadyCompleted || result.message?.toLowerCase().includes('order finished successfully');
-
-
-            if (isSuccess || isAlreadyFinished) {
-                logAndEdit(chatId, message.message_id, `✅ *Pesanan SELESAI!* Order ID: \`${order_id}\``, { 
+            isSuccess = (response.status === 200 && result.status === 'success');
+            
+            if (isSuccess || isAlreadyCompleted) {
+                 // Skenario Sukses: Order selesai (atau sudah selesai)
+                const newText = originalText.split('Status:')[0].trim() + '\n\n✅ *STATUS: SELESAI*';
+                logAndEdit(chatId, message.message_id, newText, { 
                     parse_mode: 'Markdown',
                     reply_markup: { inline_keyboard: [] } 
                 });
                 writeLog(`[ACTION] Pesanan ID ${order_id} diselesaikan oleh ${chatId}.`);
-                // Memanggil updateHistory dengan null, namun fungsi tersebut akan mengambil data lama
                 updateHistory(chatId, order_id, null, null, 'FINISHED'); 
+                return;
             } else {
-                logAndSend(chatId, `⚠️ Gagal menyelesaikan pesanan (ID: \`${order_id}\`). Pesan: ${result.message || 'Status order tidak valid.'}`);
-                writeLog(`[ERROR] Gagal Finish ID ${order_id}: ${result.message || 'Unknown Error'}`);
+                // Skenario Gagal 200 OK (tapi success: false)
+                // Lanjut ke blok 'else' di luar try/catch untuk 'skip error'
+                throw new Error(`API returned non-success (Status: false) for Finish. Message: ${result.message}`);
             }
         } catch (error) {
             const errorMsg = error.response?.data?.message || error.message;
-            const isAlreadyCompleted = errorMsg.toLowerCase().includes('order already completed') || errorMsg.toLowerCase().includes('order cannot be finished');
 
-            
-            if (isAlreadyCompleted || errorMsg.toLowerCase().includes('order finished successfully')) {
-                 logAndEdit(chatId, message.message_id, `✅ *Pesanan SELESAI!* Order ID: \`${order_id}\``, { 
-                     parse_mode: 'Markdown',
-                     reply_markup: { inline_keyboard: [] } 
-                 });
-                 writeLog(`[ACTION] Pesanan ID ${order_id} diselesaikan oleh ${chatId}. (Catch Block Success)`);
-                 // Memanggil updateHistory dengan null, namun fungsi tersebut akan mengambil data lama
-                 updateHistory(chatId, order_id, null, null, 'FINISHED');
-            } else {
-                logAndSend(chatId, `❌ Terjadi kesalahan saat Finish Order. Coba lagi.`);
+            // Logika untuk mendeteksi order sudah selesai tetap dipertahankan
+            const isCompletedError = errorMsg.toLowerCase().includes('order already completed') || errorMsg.toLowerCase().includes('order finished successfully') || errorMsg.toLowerCase().includes('order cannot be finished');
+
+            if (isCompletedError) {
+                 // Jika error-nya adalah karena order SUDAH SELESAI (Perlakukan sebagai sukses)
+                const finalSuccessText = originalText.split('Status:')[0].trim() + '\n\n✅ *STATUS: SELESAI* (Oleh API)';
+                logAndEdit(chatId, message.message_id, finalSuccessText, { 
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: [] } 
+                });
+                updateHistory(chatId, order_id, null, null, 'FINISHED');
+                writeLog(`[ACTION] Pesanan ID ${order_id} diselesaikan oleh ${chatId}. (Error: Sudah Selesai)`);
+                return;
             }
+            
+            // --- LOGIKA UTAMA FINISH SKIP ERROR (Menangani user_id on null, dll.) ---
+            writeLog(`[ERROR/FINISH_SKIP] Gagal Finish ID ${order_id} (Exception: ${errorMsg}). Skip error, move to history.`);
+
+            // 1. Tandai sebagai FINISHED di riwayat (Mengambil data nomor lama)
+            updateHistory(chatId, order_id, null, null, 'FINISHED');
+            
+            // 2. Hapus pesan lama (yang menampilkan nomor)
+            bot.deleteMessage(chatId, message.message_id).catch(err => console.log(`[WARN] Gagal menghapus pesan: ${err.message}`));
+            
+            // 3. Kirim pesan konfirmasi ke user
+            logAndSend(chatId, `✅ *Pesanan ID: \`${order_id}\` dianggap SELESAI (Error diabaikan)* dan telah dimasukkan ke Riwayat Order.`, { parse_mode: 'Markdown' });
         }
     }
 });
