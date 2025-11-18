@@ -1,6 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
-const fs = require('fs'); 
+const fs = require('fs');
 
 // --- Variabel Konfigurasi Dasar ---
 // GANTI TOKEN INI DENGAN TOKEN BARU DARI BOTFATHER!
@@ -8,9 +8,9 @@ const TELEGRAM_BOT_TOKEN = "7348650612:AAGxw63Hs1bzLBr994f07dkMeRNwI_-_f9w";
 
 // --- KONFIGURASI API KEY (Daftar API Key untuk Failover) ---
 const API_KEY_LIST = [
-    { key: "jk6ZM8itAeRfRP4asjDA8XKkGmXBnnAo", limit_reached_at: null, index: 0 },
-    { key: "LAF19i8MvV1n8P5wdDmEmwIRBIby4zGT", limit_reached_at: null, index: 1 },
-    { key: "y5OmMGlJY9SCRuLo99WzHSZGtNMvPHwd", limit_reached_at: null, index: 2 }
+    { key: "jxA5WWudkNyCsavNUJiTRktDoiJ4i358", limit_reached_at: null, index: 0 },
+    { key: "", limit_reached_at: null, index: 1 },
+    { key: "", limit_reached_at: null, index: 2 }
 ];
 
 let currentKeyIndex = 0;
@@ -106,32 +106,30 @@ const TARGET_SERVICE_KENANGAN = 1371;
 // --- KONFIGURASI FAILOVER SERVICE ID ---
 // DAFTAR PRIORITAS UNTUK FORE COFFEE
 const FORE_SERVICE_PRIORITY = [
-    { service_id: 1368, otp_id: 145985, name: "FORE COFFEE (P1)" },
-    { service_id: 1368, otp_id: 145977, name: "FORE COFFEE (P2)" },
-    { service_id: 1368, otp_id: 145984, name: "FORE COFFEE (P3)" },
-    { service_id: 1368, otp_id: 145976, name: "FORE COFFEE (P4)" },
-    { service_id: 1368, otp_id: 145986, name: "FORE COFFEE (P5)" },
-    { service_id: 1368, otp_id: 145978, name: "FORE COFFEE (P6)" },
-    { service_id: 1368, otp_id: 145988, name: "FORE COFFEE (P7)" },
-    { service_id: 1368, otp_id: 145980, name: "FORE COFFEE (P8)" },
-    { service_id: 1368, otp_id: 145981, name: "FORE COFFEE (P9)" },
-    { service_id: 1368, otp_id: 145989, name: "FORE COFFEE (P10)" },
-    { service_id: 1368, otp_id: 145979, name: "FORE COFFEE (P11)" },
-    { service_id: 1368, otp_id: 145987, name: "FORE COFFEE (P11)" },
-    { service_id: 1368, otp_id: 145982, name: "FORE COFFEE (P12)" },
-    { service_id: 1368, otp_id: 145990, name: "FORE COFFEE (P13) BACK UP" },
-    { service_id: 1368, otp_id: 145982, name: "FORE COFFEE (P14) BACK UP" },
-
-    // Tambahkan jika ada alternatif Fore
+    { service_id: 1368, otp_id: 145163, name: "FORE COFFEE (MURAH)" },
+    { service_id: 1368, otp_id: 145985, name: "FORE COFFEE (TELKOMSEL)" },
+    { service_id: 1368, otp_id: 145977, name: "FORE COFFEE (TELKOMSEL)" },
+    { service_id: 1368, otp_id: 145989, name: "FORE COFFEE (BYU)" },
+    { service_id: 1368, otp_id: 145981, name: "FORE COFFEE (BYU)" },
+    { service_id: 1368, otp_id: 145986, name: "FORE COFFEE (AXIS)" },
+    { service_id: 1368, otp_id: 145978, name: "FORE COFFEE (AXIS)" },
+    { service_id: 1368, otp_id: 145987, name: "FORE COFFEE (THREE)" },
+    { service_id: 1368, otp_id: 145979, name: "FORE COFFEE (THREE)" },
+    { service_id: 1368, otp_id: 145984, name: "FORE COFFEE (INDOSAT)" },
+    { service_id: 1368, otp_id: 145976, name: "FORE COFFEE (INDOSAT)" },
+    { service_id: 1368, otp_id: 145988, name: "FORE COFFEE (SMARTFREN)" },
+    { service_id: 1368, otp_id: 145980, name: "FORE COFFEE (SMARTFREN)" },
 ];
 
 // DAFTAR PRIORITAS UNTUK KOPI KENANGAN (DIDEFINISIKAN & DI-MAINTENANCE)
 const KENANGAN_SERVICE_PRIORITY = [
-    { service_id: 1371, otp_id: 144477, name: "KOPI KENANGAN (P1)" }, // ID Lama/Utama
-    { service_id: 1371, otp_id: 145992, name: "KOPI KENANGAN (P2)" }, // ID Baru/Alternatif
+    { service_id: 1371, otp_id: 144477, name: "KOPI KENANGAN (MURAH)" }, // ID Lama/Utama
     // Tambahkan service ID baru di sini jika ada lagi
 ];
-const IS_KENANGAN_MAINTENANCE = true; // Set ke TRUE untuk mengaktifkan mode maintenance
+// ====================================================================================
+// *** PERUBAHAN PENTING DI SINI: SET IS_KENANGAN_MAINTENANCE KE false ***
+const IS_KENANGAN_MAINTENANCE = false; // Set ke TRUE untuk mengaktifkan mode maintenance
+// ====================================================================================
 
 // Variabel dan Fungsi Utilitas
 let activeOrders = {}; 
@@ -581,18 +579,24 @@ bot.onText(/(\/hapusriwayat|\s*🗑️\s*Hapus Riwayat)/i, async (msg) => {
 
 // =======================================================
 // 5. HANDLER /beli_kode_otp (Menampilkan Pilihan Layanan) 
-//    DIPERBARUI: KOPI KENANGAN SELALU DI-MAINTENANCE (CALLBACK 'noop')
+//    DIPERBARUI: KOPI KENANGAN sekarang bisa dipilih.
 // =======================================================
 bot.onText(/\s*beli\s*kode\s*OTP\s*/i, (msg) => { 
     const chatId = msg.chat.id;
     writeLog(`User ${chatId} mengklik Beli Kode OTP.`);
     
+    const kenanganButtonText = IS_KENANGAN_MAINTENANCE 
+        ? 'KOPI KENANGAN ☕ (MAINTENANCE)'
+        : 'KOPI KENANGAN ☕';
+    const kenanganCallbackData = IS_KENANGAN_MAINTENANCE 
+        ? 'noop'
+        : `select_server_${TARGET_SERVICE_KENANGAN}`;
+
     const options = {
         reply_markup: {
             inline_keyboard: [
                 [{ text: 'FORE COFFEE ☕', callback_data: `select_server_${TARGET_SERVICE_FORE}` }],
-                // KOPI KENANGAN di-Maintenance: Callback data 'noop' akan diabaikan oleh bot.
-                [{ text: 'KOPI KENANGAN ☕ (MAINTENANCE)', callback_data: 'noop' }] 
+                [{ text: kenanganButtonText, callback_data: kenanganCallbackData }], 
             ]
         }
     };
@@ -679,11 +683,18 @@ bot.on('callback_query', async (callbackQuery) => {
     
     // Pengecekan khusus untuk kembali ke daftar layanan
     if (data === 'show_services') {
+        const kenanganButtonText = IS_KENANGAN_MAINTENANCE 
+            ? 'KOPI KENANGAN ☕ (MAINTENANCE)'
+            : 'KOPI KENANGAN ☕';
+        const kenanganCallbackData = IS_KENANGAN_MAINTENANCE 
+            ? 'noop'
+            : `select_server_${TARGET_SERVICE_KENANGAN}`;
+            
         const options = {
             reply_markup: {
                 inline_keyboard: [
                     [{ text: 'FORE COFFEE ☕', callback_data: `select_server_${TARGET_SERVICE_FORE}` }],
-                    [{ text: 'KOPI KENANGAN ☕ (MAINTENANCE)', callback_data: 'noop' }] 
+                    [{ text: kenanganButtonText, callback_data: kenanganCallbackData }] 
                 ]
             }
         };
@@ -739,8 +750,8 @@ bot.on('callback_query', async (callbackQuery) => {
         if (targetServiceId === TARGET_SERVICE_KENANGAN && IS_KENANGAN_MAINTENANCE) {
              const keyboard = getServerSelectionKeyboard(TARGET_SERVICE_KENANGAN);
              await logAndSend(chatId, `❌ Gagal membuat pesanan. *KOPI KENANGAN sedang Maintenance.*`, { 
-                parse_mode: 'Markdown',
-                reply_markup: keyboard
+                 parse_mode: 'Markdown',
+                 reply_markup: keyboard
              });
              return;
         }
